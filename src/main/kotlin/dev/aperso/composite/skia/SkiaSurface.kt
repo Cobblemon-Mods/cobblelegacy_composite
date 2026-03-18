@@ -22,10 +22,6 @@ import org.lwjgl.opengl.GL30
 import java.util.ArrayDeque
 import java.util.Deque
 
-/**
- * AbstractTexture wrapper that exposes a GpuTexture managed by SkiaSurface.
- * Does NOT close the underlying textures - SkiaSurface manages their lifecycle.
- */
 private class SkiaBackedTexture : AbstractTexture() {
     fun update(tex: GpuTexture?, view: GpuTextureView?) {
         this.texture = tex
@@ -38,87 +34,96 @@ private class SkiaBackedTexture : AbstractTexture() {
     }
 
     override fun close() {
-        // Don't close GpuTexture/View - SkiaSurface manages lifecycle
         clearRefs()
     }
 }
+
+/**
+ * Complete set of resources for one surface size.
+ * ALL resources including the FBO are created together and destroyed together.
+ */
+private class SurfaceResources(
+    val fbo: Int,
+    val gpuTexture: GpuTexture,
+    val gpuTextureView: GpuTextureView,
+    val skiaSurface: Surface,
+    val backendTarget: BackendRenderTarget,
+) {
+    fun destroy() {
+        SkiaContext.run {
+            skiaSurface.close()
+            backendTarget.close()
+        }
+        gpuTextureView.close()
+        gpuTexture.close()
+        GL30.glDeleteFramebuffers(fbo)
+    }
+}
+
+private data class DeferredCleanup(
+    val resources: SurfaceResources,
+    var framesRemaining: Int = 4
+)
 
 class SkiaSurface {
     companion object {
         private val TEXTURE_ID = Identifier.fromNamespaceAndPath("composite", "skia_surface")
     }
 
-    private var skiaFbo: Int = 0
     private var currentWidth: Int = 0
     private var currentHeight: Int = 0
-
-    private var gpuTexture: GpuTexture? = null
-    private var gpuTextureView: GpuTextureView? = null
-
-    private var backendTarget: BackendRenderTarget? = null
-    private var skiaSurface: Surface? = null
+    private var active: SurfaceResources? = null
 
     private val skiaTexture = SkiaBackedTexture()
     private var textureRegistered = false
+    private val pendingCleanup = mutableListOf<DeferredCleanup>()
 
     fun resize(width: Int, height: Int) {
         if (width <= 0 || height <= 0) return
         if (currentWidth == width && currentHeight == height) return
 
-        // 1. Clear references in the AbstractTexture wrapper FIRST
-        //    so the render pipeline won't access stale textures
+        // 1. Detach from wrapper immediately
         skiaTexture.clearRefs()
 
-        // 2. Close Skia resources (must be done before GL texture is freed)
-        skiaSurface?.let { surface ->
-            SkiaContext.run {
-                surface.close()
-            }
+        // 2. Schedule entire old resource set for deferred cleanup
+        active?.let { old ->
+            pendingCleanup.add(DeferredCleanup(old))
         }
-        skiaSurface = null
-        backendTarget?.let { target ->
-            SkiaContext.run {
-                target.close()
-            }
-        }
-        backendTarget = null
-
-        // 3. Close old MC textures
-        gpuTextureView?.close()
-        gpuTextureView = null
-        gpuTexture?.close()
-        gpuTexture = null
+        active = null
 
         currentWidth = width
         currentHeight = height
 
-        // 4. Create new GpuTexture through MC's device
+        // 3. Create entirely new resource set
         val device = RenderSystem.getDevice()
         val usage = GpuTexture.USAGE_COPY_DST or
                 GpuTexture.USAGE_COPY_SRC or
                 GpuTexture.USAGE_TEXTURE_BINDING or
                 GpuTexture.USAGE_RENDER_ATTACHMENT
-        gpuTexture = device.createTexture(
+
+        val gpuTexture = device.createTexture(
             { "Composite Skia Surface" }, usage,
             TextureFormat.RGBA8, width, height, 1, 1
         )
-        gpuTextureView = device.createTextureView(gpuTexture!!)
-
-        // 5. Create FBO for Skia rendering
+        val gpuTextureView = device.createTextureView(gpuTexture)
         val glId = (gpuTexture as GlTexture).glId()
-        if (skiaFbo == 0) skiaFbo = GL30.glGenFramebuffers()
-        GL30.glBindFramebuffer(GL30.GL_FRAMEBUFFER, skiaFbo)
+
+        // New FBO for this size (never reused)
+        val fbo = GL30.glGenFramebuffers()
+        GL30.glBindFramebuffer(GL30.GL_FRAMEBUFFER, fbo)
         GL30.glFramebufferTexture2D(
             GL30.GL_FRAMEBUFFER, GL30.GL_COLOR_ATTACHMENT0,
             GL11.GL_TEXTURE_2D, glId, 0
         )
         GL30.glBindFramebuffer(GL30.GL_FRAMEBUFFER, 0)
 
-        // 6. Create Skia surface
+        // New Skia surface
+        var skiaSurface: Surface? = null
+        var backendTarget: BackendRenderTarget? = null
         SkiaContext.run {
             val context = SkiaContext.directContext
             val bt = BackendRenderTarget.makeGL(
-                width, height, 0, 8, skiaFbo, GL30.GL_RGBA8
+                width, height, 0, 8, fbo, GL30.GL_RGBA8
             )
             backendTarget = bt
             skiaSurface = Surface.makeFromBackendRenderTarget(
@@ -129,8 +134,8 @@ class SkiaSurface {
             ) ?: throw RuntimeException("Failed to create Skia surface")
         }
 
-        // 7. Update wrapper with new textures
-        skiaTexture.update(gpuTexture!!, gpuTextureView!!)
+        active = SurfaceResources(fbo, gpuTexture, gpuTextureView, skiaSurface!!, backendTarget!!)
+        skiaTexture.update(gpuTexture, gpuTextureView)
     }
 
     private val recordedCalls: Deque<GuiGraphics.() -> Unit> = ArrayDeque()
@@ -139,11 +144,23 @@ class SkiaSurface {
         recordedCalls.push(call)
     }
 
-    fun render(guiGraphics: GuiGraphics, render: (Canvas) -> Unit) {
-        val surface = skiaSurface ?: return
-        if (gpuTexture == null) return
+    private fun processDeferredCleanup() {
+        val iterator = pendingCleanup.iterator()
+        while (iterator.hasNext()) {
+            val entry = iterator.next()
+            entry.framesRemaining--
+            if (entry.framesRemaining <= 0) {
+                entry.resources.destroy()
+                iterator.remove()
+            }
+        }
+    }
 
-        // Register texture with MC's TextureManager (once)
+    fun render(guiGraphics: GuiGraphics, render: (Canvas) -> Unit) {
+        processDeferredCleanup()
+
+        val res = active ?: return
+
         if (!textureRegistered) {
             Minecraft.getInstance().textureManager.register(TEXTURE_ID, skiaTexture)
             textureRegistered = true
@@ -151,20 +168,18 @@ class SkiaSurface {
 
         // 1. Render Compose UI via Skia
         SkiaContext.run {
-            surface.canvas.clear(0x00000000.toInt())
-            render(surface.canvas.asComposeCanvas())
+            res.skiaSurface.canvas.clear(0)
+            render(res.skiaSurface.canvas.asComposeCanvas())
             SkiaContext.directContext.resetGLAll()
             SkiaContext.directContext.flush()
         }
 
-        // 2. Submit Skia texture to GuiRenderState via blit
+        // 2. Submit to GuiRenderState
         val guiW = guiGraphics.guiWidth()
         val guiH = guiGraphics.guiHeight()
-        // blit(location, x0, y0, x1, y1, u0, u1, v0, v1)
-        // Skia BOTTOM_LEFT → flip V: v0=1, v1=0
         guiGraphics.blit(TEXTURE_ID, 0, 0, guiW, guiH, 0f, 1f, 1f, 0f)
 
-        // 3. Replay recorded GuiGraphics calls
+        // 3. Replay recorded calls
         while (true) {
             val call = recordedCalls.poll() ?: break
             call.invoke(guiGraphics)
