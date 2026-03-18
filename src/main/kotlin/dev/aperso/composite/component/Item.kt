@@ -17,12 +17,10 @@ import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInWindow
-import com.mojang.blaze3d.systems.RenderSystem
 import dev.aperso.composite.skia.LocalSkiaSurface
 import kotlinx.coroutines.isActive
 import net.minecraft.client.Minecraft
 import net.minecraft.world.item.ItemStack
-import org.lwjgl.opengl.GL30
 import kotlin.math.min
 
 @Composable
@@ -31,7 +29,7 @@ fun Item(item: ItemStack, modifier: Modifier = Modifier, decorations: Boolean = 
     var coordinates by remember { mutableStateOf<LayoutCoordinates?>(null) }
     val interactionSource = remember { MutableInteractionSource() }
     val hovered by interactionSource.collectIsHoveredAsState()
-    
+
     val minecraft = Minecraft.getInstance()
     val window = minecraft.window
     val guiScale = window.guiScale.toFloat()
@@ -45,35 +43,32 @@ fun Item(item: ItemStack, modifier: Modifier = Modifier, decorations: Boolean = 
                         if (!coordinates.isAttached) return@record
                         val position = coordinates.positionInWindow()
                         val bounds = coordinates.boundsInWindow()
-                        val height = window.height
-                        pose().pushPose()
-                        val guiX = position.x * density
-                        val guiY = position.y * density
-                        pose().translate(guiX, guiY, 0f)
-                        val itemSizeGui = 16f
-                        val boundsWidthGui = bounds.width * density
-                        val boundsHeightGui = bounds.height * density
-                        val scale = min(boundsWidthGui / itemSizeGui, boundsHeightGui / itemSizeGui)
-                        val offsetX = (boundsWidthGui - itemSizeGui * scale) / 2f
-                        val offsetY = (boundsHeightGui - itemSizeGui * scale) / 2f
-                        pose().translate(offsetX, offsetY, 0f)
-                        pose().scale(scale, scale, 1f)
-                        val scissorDisabled = !GL30.glIsEnabled(GL30.GL_SCISSOR_TEST)
-                        if (scissorDisabled) RenderSystem.enableScissor(
-                            bounds.left.toInt(),
-                            height - (bounds.top + bounds.height).toInt(),
-                            bounds.width.toInt(),
-                            bounds.height.toInt()
-                        )
-                        renderFakeItem(item, 0, 0)
-                        if (scissorDisabled) RenderSystem.disableScissor()
-                        if (decorations) renderItemDecorations(minecraft.font, item, 0, 0)
-                        pose().popPose()
+
+                        // Convert to GUI coordinates (integer)
+                        val guiX = (position.x * density).toInt()
+                        val guiY = (position.y * density).toInt()
+                        val boundsWidthGui = (bounds.width * density).toInt()
+                        val boundsHeightGui = (bounds.height * density).toInt()
+
+                        // In 1.21.11, items render at 16x16 in GUI space.
+                        // Center the item within the available bounds.
+                        val itemSize = 16
+                        val itemX = guiX + (boundsWidthGui - itemSize) / 2
+                        val itemY = guiY + (boundsHeightGui - itemSize) / 2
+
+                        // Scissor to bounds
+                        enableScissor(guiX, guiY, guiX + boundsWidthGui, guiY + boundsHeightGui)
+
+                        // Render item at direct GUI coordinates - no matrix transforms
+                        renderFakeItem(item, itemX, itemY)
+                        if (decorations) renderItemDecorations(minecraft.font, item, itemX, itemY)
+
+                        disableScissor()
+
                         if (tooltip && hovered) {
                             val mouseX = (minecraft.mouseHandler.xpos() * density).toInt()
                             val mouseY = (minecraft.mouseHandler.ypos() * density).toInt()
-                            renderTooltip(minecraft.font, item, mouseX, mouseY)
-                            flush()
+                            setTooltipForNextFrame(minecraft.font, item, mouseX, mouseY)
                         }
                     }
                 }
