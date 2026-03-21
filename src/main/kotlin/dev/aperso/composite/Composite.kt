@@ -16,6 +16,8 @@ object Composite : ClientModInitializer {
     val logger: Logger = LoggerFactory.getLogger("Composite")
 
     override fun onInitializeClient() {
+        System.setProperty("skiko.macos.opengl.enabled", "true")
+
         ClientLifecycleEvents.CLIENT_STARTED.register {
             logger.info("initializing skia context")
             SkiaContext.initialize()
