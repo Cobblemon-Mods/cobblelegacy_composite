@@ -3,7 +3,7 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose") version "2.3.0"
     id("org.jetbrains.compose") version "1.9.3"
     id("maven-publish")
-    id("net.fabricmc.fabric-loom-remap") version "1.15-SNAPSHOT"
+    id("net.fabricmc.fabric-loom-remap") version "1.14-SNAPSHOT"
 }
 
 version = "0.5.0"
@@ -22,12 +22,12 @@ repositories {
 val natives = arrayListOf<File>()
 
 dependencies {
-    minecraft("com.mojang:minecraft:1.21.11")
+    minecraft("com.mojang:minecraft:1.21.1")
     mappings(loom.officialMojangMappings())
 
-    modImplementation("net.fabricmc:fabric-loader:0.18.4")
-    modImplementation("net.fabricmc.fabric-api:fabric-api:0.141.3+1.21.11")
-    modImplementation("net.fabricmc:fabric-language-kotlin:1.13.9+kotlin.2.3.10")
+    modImplementation("net.fabricmc:fabric-loader:0.16.14")
+    modImplementation("net.fabricmc.fabric-api:fabric-api:0.116.7+1.21.1")
+    modImplementation("net.fabricmc:fabric-language-kotlin:1.13.8+kotlin.2.3.0")
 
     val transitiveInclude by configurations.creating
     transitiveInclude(implementation(compose.material3)!!)

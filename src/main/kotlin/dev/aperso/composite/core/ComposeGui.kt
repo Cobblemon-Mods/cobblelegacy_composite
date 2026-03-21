@@ -49,8 +49,8 @@ open class ComposeGui(
     private val clipboard = object : Clipboard {
         override val nativeClipboard = Any()
 
-        override suspend fun getClipEntry(): ClipEntry {
-            val text = minecraft.keyboardHandler.clipboard
+        override suspend fun getClipEntry(): ClipEntry? {
+            val text = minecraft?.keyboardHandler?.clipboard ?: return null
             return ClipEntry(StringSelection(text))
         }
 
@@ -62,7 +62,7 @@ open class ComposeGui(
                         transferable.getTransferData(DataFlavor.stringFlavor)
                     } as? String
                     if (text != null) {
-                        minecraft.keyboardHandler.clipboard = text
+                        minecraft?.keyboardHandler?.clipboard = text
                     }
                 } catch (_: Exception) {}
             }
@@ -80,7 +80,7 @@ open class ComposeGui(
             CompositionLocalProvider(
                 LocalSkiaSurface provides surface,
                 LocalClipboard provides clipboard,
-                LocalLocale provides minecraft.options.languageCode
+                LocalLocale provides (minecraft?.options?.languageCode ?: "en_us")
             ) {
                 content()
             }
@@ -105,9 +105,9 @@ open class ComposeGui(
             PointerIcon.Crosshair -> GLFW.GLFW_CROSSHAIR_CURSOR
             else -> GLFW.GLFW_ARROW_CURSOR
         }
-        minecraft.window.let {
+        minecraft?.window?.let {
             GLFW.glfwSetCursor(
-                it.handle(),
+                it.window,
                 GLFW.glfwCreateStandardCursor(cursor)
             )
         }
@@ -122,15 +122,15 @@ open class ComposeGui(
         scene.size = IntSize(window.width, window.height)
         scene.density = Density(scale * 0.5f, 1.0f)
         if (charCallback == null) {
-            charCallback = GLFW.glfwSetCharCallback(minecraft.window.handle()) {
-                    _, codepoint -> onEditCommand?.invoke(listOf(CommitTextCommand(Char(codepoint).toString(), 1)))
+            charCallback = GLFW.glfwSetCharCallback(minecraft.window.window) {
+                _, codepoint -> onEditCommand?.invoke(listOf(CommitTextCommand(Char(codepoint).toString(), 1)))
             }
         }
     }
 
     open fun onClose() {
         scene.close()
-        GLFW.glfwSetCharCallback(minecraft.window.handle(), charCallback)
+        GLFW.glfwSetCharCallback(minecraft.window.window, charCallback)
     }
 
     open fun render(guiGraphics: GuiGraphics, mouseX: Int, mouseY: Int, partialTick: Float) {
@@ -176,7 +176,7 @@ open class ComposeGui(
     open fun mouseScrolled(mouseX: Double, mouseY: Double, scrollX: Double, scrollY: Double): Boolean {
         this.scrollX += scrollX.toFloat()
         this.scrollY -= scrollY.toFloat()
-        return true
+        return true // Returning true as gui handled it, though original called super.
     }
 
     private fun keyEvent(type: KeyEventType, keyCode: Int, modifiers: Int): KeyEvent {
@@ -198,10 +198,6 @@ open class ComposeGui(
         )
     }
 
-    /**
-     * Handle key press from the new KeyEvent-based system.
-     * Called by ComposeScreen which bridges from Screen#keyPressed(KeyEvent).
-     */
     open fun keyPressed(keyCode: Int, scanCode: Int, modifiers: Int): Boolean {
         val result = scene.sendKeyEvent(keyEvent(KeyEventType.KeyDown, keyCode, modifiers))
         return if (result) {

@@ -16,15 +16,15 @@ import dev.aperso.composite.Composite
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import net.minecraft.client.Minecraft
-import net.minecraft.resources.Identifier
+import net.minecraft.resources.ResourceLocation
 import org.jetbrains.skia.Image
 import kotlin.jvm.optionals.getOrNull
 
-val imageCache = LruCache<Identifier, ImageBitmap>(64)
+val imageCache = LruCache<ResourceLocation, ImageBitmap>(64)
 
 @Composable
 fun AssetImage(
-    resource: Identifier,
+    resource: ResourceLocation,
     modifier: Modifier = Modifier,
     contentDescription: String?,
     alignment: Alignment = Alignment.Center,
@@ -52,7 +52,7 @@ fun AssetImage(
     }
 }
 
-suspend fun loadAssetImage(location: Identifier): ImageBitmap? {
+suspend fun loadAssetImage(location: ResourceLocation): ImageBitmap? {
     return withContext(Dispatchers.IO) {
         try {
             val resourceManager = Minecraft.getInstance().resourceManager

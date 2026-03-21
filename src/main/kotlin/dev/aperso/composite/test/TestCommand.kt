@@ -16,7 +16,7 @@ abstract class TestCommand(private val name: String) {
     @OptIn(InternalComposeUiApi::class, ExperimentalComposeUiApi::class)
     fun register(): LiteralArgumentBuilder<FabricClientCommandSource> {
         return ClientCommandManager.literal(name).executes {
-            Minecraft.getInstance().execute {
+            Minecraft.getInstance().tell {
                 Minecraft.getInstance().setScreen(ComposeScreen(
                     title = Component.literal("Test: $name"),
                     content = content

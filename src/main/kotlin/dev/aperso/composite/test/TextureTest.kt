@@ -8,7 +8,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import dev.aperso.composite.component.Components
-import net.minecraft.resources.Identifier
+import net.minecraft.resources.ResourceLocation
 
 object TextureTest : TestCommand("texture") {
     override val content: @Composable () -> Unit = {
@@ -17,7 +17,7 @@ object TextureTest : TestCommand("texture") {
             contentAlignment = Alignment.Center
         ) {
             Components.Texture(
-                texture = Identifier.fromNamespaceAndPath("minecraft", "textures/block/dirt.png"),
+                texture = ResourceLocation.fromNamespaceAndPath("minecraft", "textures/block/dirt.png"),
                 modifier = Modifier.size(128.dp)
             )
         }

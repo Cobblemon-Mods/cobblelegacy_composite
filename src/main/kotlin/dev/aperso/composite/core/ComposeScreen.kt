@@ -3,8 +3,6 @@ package dev.aperso.composite.core
 import androidx.compose.runtime.Composable
 import net.minecraft.client.gui.GuiGraphics
 import net.minecraft.client.gui.screens.Screen
-import net.minecraft.client.input.KeyEvent
-import net.minecraft.client.input.MouseButtonEvent
 import net.minecraft.network.chat.Component
 
 open class ComposeScreen(
@@ -27,19 +25,19 @@ open class ComposeScreen(
         gui.render(graphics, mouseX, mouseY, partialTick)
     }
 
-    override fun mouseClicked(event: MouseButtonEvent, doubleClick: Boolean): Boolean {
-        return if (gui.mouseClicked(event.x(), event.y(), event.button())) {
+    override fun mouseClicked(mouseX: Double, mouseY: Double, button: Int): Boolean {
+        return if (gui.mouseClicked(mouseX, mouseY, button)) {
             true
         } else {
-            super.mouseClicked(event, doubleClick)
+            super.mouseClicked(mouseX, mouseY, button)
         }
     }
 
-    override fun mouseReleased(event: MouseButtonEvent): Boolean {
-        return if (gui.mouseReleased(event.x(), event.y(), event.button())) {
+    override fun mouseReleased(mouseX: Double, mouseY: Double, button: Int): Boolean {
+        return if (gui.mouseReleased(mouseX, mouseY, button)) {
             true
         } else {
-            super.mouseReleased(event)
+            super.mouseReleased(mouseX, mouseY, button)
         }
     }
 
@@ -51,19 +49,19 @@ open class ComposeScreen(
         }
     }
 
-    override fun keyPressed(event: KeyEvent): Boolean {
-        return if (gui.keyPressed(event.key(), event.scancode(), event.modifiers())) {
+    override fun keyPressed(keyCode: Int, scanCode: Int, modifiers: Int): Boolean {
+        return if (gui.keyPressed(keyCode, scanCode, modifiers)) {
             true
         } else {
-            super.keyPressed(event)
+            super.keyPressed(keyCode, scanCode, modifiers)
         }
     }
 
-    override fun keyReleased(event: KeyEvent): Boolean {
-        return if (gui.keyReleased(event.key(), event.scancode(), event.modifiers())) {
+    override fun keyReleased(keyCode: Int, scanCode: Int, modifiers: Int): Boolean {
+        return if (gui.keyReleased(keyCode, scanCode, modifiers)) {
             true
         } else {
-            super.keyReleased(event)
+            super.keyReleased(keyCode, scanCode, modifiers)
         }
     }
 }

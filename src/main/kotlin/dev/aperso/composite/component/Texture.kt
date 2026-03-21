@@ -14,22 +14,30 @@ import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInWindow
+import com.mojang.blaze3d.systems.RenderSystem
+import com.mojang.blaze3d.vertex.BufferUploader
+import com.mojang.blaze3d.vertex.DefaultVertexFormat
+import com.mojang.blaze3d.vertex.Tesselator
+import com.mojang.blaze3d.vertex.VertexFormat
 import dev.aperso.composite.skia.LocalSkiaSurface
 import kotlinx.coroutines.isActive
 import net.minecraft.client.Minecraft
+import net.minecraft.client.renderer.GameRenderer
 import net.minecraft.client.renderer.texture.AbstractTexture
-import net.minecraft.resources.Identifier
+import net.minecraft.resources.ResourceLocation
+import org.lwjgl.opengl.GL30
 
 @Composable
 fun Texture(
-    texture: Identifier,
+    texture: ResourceLocation,
     modifier: Modifier = Modifier,
     u: Float = 0f,
     v: Float = 0f,
     w: Float = 1f,
     h: Float = 1f
 ) {
-    TextureImpl(texture, modifier, u, v, w, h)
+    val abstractTexture = Minecraft.getInstance().textureManager.getTexture(texture)
+    Texture(abstractTexture, modifier, u, v, w, h)
 }
 
 @Composable
@@ -41,36 +49,15 @@ fun Texture(
     w: Float = 1f,
     h: Float = 1f
 ) {
-    val minecraft = Minecraft.getInstance()
-    val dynamicId = remember(texture) {
-        val id = Identifier.fromNamespaceAndPath(
-            "composite",
-            "dynamic_tex_${System.identityHashCode(texture)}"
-        )
-        minecraft.textureManager.register(id, texture)
-        id
-    }
-    TextureImpl(dynamicId, modifier, u, v, w, h)
-}
-
-@Composable
-private fun TextureImpl(
-    textureLocation: Identifier,
-    modifier: Modifier,
-    u: Float,
-    v: Float,
-    w: Float,
-    h: Float
-) {
     val surface = LocalSkiaSurface.current
     var coordinates by remember { mutableStateOf<LayoutCoordinates?>(null) }
-
+    
     val minecraft = Minecraft.getInstance()
     val window = minecraft.window
     val guiScale = window.guiScale.toFloat()
     val density = 1f / guiScale
 
-    LaunchedEffect(coordinates, guiScale, textureLocation) {
+    LaunchedEffect(coordinates, guiScale, texture) {
         coordinates?.let { coordinates ->
             while (isActive) {
                 withFrameNanos {
@@ -78,29 +65,38 @@ private fun TextureImpl(
                         if (!coordinates.isAttached) return@record
                         val position = coordinates.positionInWindow()
                         val bounds = coordinates.boundsInWindow()
-
-                        // Direct GUI coordinates (no matrix transforms)
-                        val guiX = (position.x * density).toInt()
-                        val guiY = (position.y * density).toInt()
-                        val widthGui = (bounds.width * density).toInt()
-                        val heightGui = (bounds.height * density).toInt()
-
-                        if (widthGui <= 0 || heightGui <= 0) return@record
-
-                        enableScissor(guiX, guiY, guiX + widthGui, guiY + heightGui)
-
-                        // blit(location, x0, y0, x1, y1, u0, u1, v0, v1)
-                        // x0,y0 = top-left; x1,y1 = bottom-right
-                        // u0,u1 = left,right UV; v0,v1 = top,bottom UV
-                        blit(
-                            textureLocation,
-                            guiX, guiY,
-                            guiX + widthGui, guiY + heightGui,
-                            u, u + w,
-                            v, v + h
+                        val height = window.height
+                        GL30.glScissor(
+                            bounds.left.toInt(),
+                            height - (bounds.top + bounds.height).toInt(),
+                            bounds.width.toInt(),
+                            bounds.height.toInt()
                         )
-
-                        disableScissor()
+                        pose().pushPose()
+                        val guiX = position.x * density
+                        val guiY = position.y * density
+                        val widthGui = bounds.width * density
+                        val heightGui = bounds.height * density
+                        pose().translate(guiX, guiY, 0f)
+                        RenderSystem.setShaderTexture(0, texture.id)
+                        RenderSystem.setShader(GameRenderer::getPositionTexShader)
+                        val matrix4f = pose().last().pose()
+                        val tesselator = Tesselator.getInstance()
+                        val buffer = tesselator.begin(VertexFormat.Mode.QUADS, DefaultVertexFormat.POSITION_TEX)
+                        buffer.addVertex(matrix4f, 0f, heightGui, 0f).setUv(u, v + h)
+                        buffer.addVertex(matrix4f, widthGui, heightGui, 0f).setUv(u + w, v + h)
+                        buffer.addVertex(matrix4f, widthGui, 0f, 0f).setUv(u + w, v)
+                        buffer.addVertex(matrix4f, 0f, 0f, 0f).setUv(u, v)
+                        val scissorDisabled = !GL30.glIsEnabled(GL30.GL_SCISSOR_TEST)
+                        if (scissorDisabled) RenderSystem.enableScissor(
+                            bounds.left.toInt(),
+                            height - (bounds.top + bounds.height).toInt(),
+                            bounds.width.toInt(),
+                            bounds.height.toInt()
+                        )
+                        BufferUploader.drawWithShader(buffer.buildOrThrow())
+                        if (scissorDisabled) RenderSystem.disableScissor()
+                        pose().popPose()
                     }
                 }
             }
