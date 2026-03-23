@@ -33,11 +33,8 @@ dependencies {
     transitiveInclude(implementation(compose.material3)!!)
     transitiveInclude(implementation(compose.materialIconsExtended)!!)
     transitiveInclude(implementation(compose.desktop.windows_x64)!!)
-    transitiveInclude(implementation(compose.desktop.windows_arm64)!!)
     transitiveInclude(implementation(compose.desktop.macos_x64)!!)
     transitiveInclude(implementation(compose.desktop.macos_arm64)!!)
-    transitiveInclude(implementation(compose.desktop.linux_x64)!!)
-    transitiveInclude(implementation(compose.desktop.linux_arm64)!!)
     transitiveInclude(implementation("androidx.collection:collection:1.5.0")!!)
     transitiveInclude.resolvedConfiguration.resolvedArtifacts.forEach {
         val id = it.moduleVersion.id

@@ -7,9 +7,13 @@ import net.minecraft.client.gui.GuiGraphics
 
 open class ComposeHud(content: @Composable () -> Unit): HudRenderCallback {
     val gui = ComposeGui(content)
+    private var initialized = false
 
     override fun onHudRender(graphics: GuiGraphics, deltaTracker: DeltaTracker) {
-        gui.init()
+        if (!initialized) {
+            gui.init()
+            initialized = true
+        }
         gui.render(graphics, 0, 0, deltaTracker.realtimeDeltaTicks)
     }
 }
