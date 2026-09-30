@@ -5,6 +5,7 @@ import androidx.compose.ui.graphics.Canvas
 import androidx.compose.ui.graphics.asComposeCanvas
 import com.mojang.blaze3d.pipeline.TextureTarget
 import com.mojang.blaze3d.systems.RenderSystem
+import dev.aperso.composite.diag.RenderDiagnostics
 import net.minecraft.client.Minecraft
 import net.minecraft.client.gui.GuiGraphics
 import net.minecraft.util.ArrayListDeque
@@ -34,9 +35,9 @@ class SkiaSurface {
         SkiaContext.run {
             if (this::surface.isInitialized) surface.close()
             if (this::target.isInitialized) target.close()
-            
+
             texture.resize(width, height, false)
-            
+
             val context = SkiaContext.directContext
             target = BackendRenderTarget.makeGL(
                 width,
@@ -54,7 +55,10 @@ class SkiaSurface {
                 ColorSpace.sRGB
             ) ?: throw RuntimeException("Failed to create Skia surface")
         }
-        
+        // texture.resize() est passe par GlStateManager depuis l'autre contexte : ses caches
+        // decrivent desormais un etat qui n'existe pas cote Minecraft.
+        GlStateGuard.restore()
+
         GL30.glBindFramebuffer(GL30.GL_FRAMEBUFFER, buffer)
         GL30.glFramebufferTexture2D(
             GL30.GL_FRAMEBUFFER,
@@ -68,8 +72,12 @@ class SkiaSurface {
 
     private val recordedCalls: Deque<GuiGraphics.() -> Unit> = ArrayListDeque()
 
+    /**
+     * Differe un appel de rendu Minecraft natif (item, texture) : Skia ne sait pas les dessiner,
+     * ils sont donc rejoues sur la cible principale une fois la surface Compose composee.
+     */
     fun record(call: GuiGraphics.() -> Unit) {
-        recordedCalls.push(call)
+        recordedCalls.addLast(call)
     }
 
     fun render(guiGraphics: GuiGraphics, render: (Canvas) -> Unit) {
@@ -77,21 +85,35 @@ class SkiaSurface {
         val main = Minecraft.getInstance().mainRenderTarget
         GL30.glBindFramebuffer(GL30.GL_FRAMEBUFFER, buffer)
         main.blitToScreen(main.width, main.height, true)
-        
+
         SkiaContext.run {
             render(surface.canvas.asComposeCanvas())
             SkiaContext.directContext.resetGLAll()
             SkiaContext.directContext.flush()
         }
-        
+        // Doit venir immediatement apres Skia : tant que ce n'est pas fait, tout appel de rendu
+        // Minecraft (y compris le blit ci-dessous) travaille sur un etat GL incoherent.
+        GlStateGuard.restoreAfterSkia()
+
         main.bindWrite(true)
         RenderSystem.enableBlend()
         texture.blitToScreen(main.width, main.height, false)
-        
+        main.bindWrite(true)
+        // Contrat du rejeu : aucun scissor herite. Les composants appelants sondent parfois
+        // GL_SCISSOR_TEST pour decider s'ils doivent poser leur propre decoupe ; un scissor
+        // laisse actif par Skia leur fait alors hériter d'un clip arbitraire et leurs dessins
+        // sont rognes hors ecran. enable puis disable resynchronise cache et GL a coup sur.
+        RenderSystem.enableScissor(0, 0, main.viewWidth, main.viewHeight)
+        RenderSystem.disableScissor()
+
+        RenderDiagnostics.beforeReplay(guiGraphics, recordedCalls.size)
+        var replayed = 0
         while (true) {
-            val call = recordedCalls.poll() ?: break
+            val call = recordedCalls.pollFirst() ?: break
             call.invoke(guiGraphics)
+            replayed++
         }
+        RenderDiagnostics.afterReplay(guiGraphics, replayed)
     }
 }
 

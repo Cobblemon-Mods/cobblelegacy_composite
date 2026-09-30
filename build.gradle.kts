@@ -9,6 +9,15 @@ plugins {
 version = "0.5.0"
 group = "dev.aperso"
 
+base {
+    archivesName.set("cobblelegacy-libs")
+}
+
+// Jar final sans suffixe de version -> "cobblelegacy-libs.jar"
+tasks.withType(org.gradle.api.tasks.bundling.AbstractArchiveTask::class.java).configureEach {
+    archiveVersion.set("")
+}
+
 java {
     toolchain {
         languageVersion = JavaLanguageVersion.of(21)

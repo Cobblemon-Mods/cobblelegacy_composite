@@ -22,7 +22,6 @@ import dev.aperso.composite.skia.LocalSkiaSurface
 import kotlinx.coroutines.isActive
 import net.minecraft.client.Minecraft
 import net.minecraft.world.item.ItemStack
-import org.lwjgl.opengl.GL30
 import kotlin.math.min
 
 @Composable
@@ -58,15 +57,17 @@ fun Item(item: ItemStack, modifier: Modifier = Modifier, decorations: Boolean = 
                         val offsetY = (boundsHeightGui - itemSizeGui * scale) / 2f
                         pose().translate(offsetX, offsetY, 0f)
                         pose().scale(scale, scale, 1f)
-                        val scissorDisabled = !GL30.glIsEnabled(GL30.GL_SCISSOR_TEST)
-                        if (scissorDisabled) RenderSystem.enableScissor(
+                        // Toujours poser notre propre decoupe : sonder GL_SCISSOR_TEST
+                        // revenait a heriter du clip que Skia avait laisse actif, et l'item
+                        // etait alors decoupe hors de l'ecran.
+                        RenderSystem.enableScissor(
                             bounds.left.toInt(),
                             height - (bounds.top + bounds.height).toInt(),
                             bounds.width.toInt(),
                             bounds.height.toInt()
                         )
                         renderFakeItem(item, 0, 0)
-                        if (scissorDisabled) RenderSystem.disableScissor()
+                        RenderSystem.disableScissor()
                         if (decorations) renderItemDecorations(minecraft.font, item, 0, 0)
                         pose().popPose()
                         if (tooltip && hovered) {

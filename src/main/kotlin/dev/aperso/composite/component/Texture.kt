@@ -25,7 +25,6 @@ import net.minecraft.client.Minecraft
 import net.minecraft.client.renderer.GameRenderer
 import net.minecraft.client.renderer.texture.AbstractTexture
 import net.minecraft.resources.ResourceLocation
-import org.lwjgl.opengl.GL30
 
 @Composable
 fun Texture(
@@ -66,12 +65,6 @@ fun Texture(
                         val position = coordinates.positionInWindow()
                         val bounds = coordinates.boundsInWindow()
                         val height = window.height
-                        GL30.glScissor(
-                            bounds.left.toInt(),
-                            height - (bounds.top + bounds.height).toInt(),
-                            bounds.width.toInt(),
-                            bounds.height.toInt()
-                        )
                         pose().pushPose()
                         val guiX = position.x * density
                         val guiY = position.y * density
@@ -87,15 +80,14 @@ fun Texture(
                         buffer.addVertex(matrix4f, widthGui, heightGui, 0f).setUv(u + w, v + h)
                         buffer.addVertex(matrix4f, widthGui, 0f, 0f).setUv(u + w, v)
                         buffer.addVertex(matrix4f, 0f, 0f, 0f).setUv(u, v)
-                        val scissorDisabled = !GL30.glIsEnabled(GL30.GL_SCISSOR_TEST)
-                        if (scissorDisabled) RenderSystem.enableScissor(
+                        RenderSystem.enableScissor(
                             bounds.left.toInt(),
                             height - (bounds.top + bounds.height).toInt(),
                             bounds.width.toInt(),
                             bounds.height.toInt()
                         )
                         BufferUploader.drawWithShader(buffer.buildOrThrow())
-                        if (scissorDisabled) RenderSystem.disableScissor()
+                        RenderSystem.disableScissor()
                         pose().popPose()
                     }
                 }

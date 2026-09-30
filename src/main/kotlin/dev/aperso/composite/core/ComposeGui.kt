@@ -26,7 +26,9 @@ import androidx.compose.ui.text.input.EditCommand
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.IntSize
 import dev.aperso.composite.i18n.LocalLocale
+import dev.aperso.composite.skia.GlStateGuard
 import dev.aperso.composite.skia.LocalSkiaSurface
+import dev.aperso.composite.skia.SkiaContext
 import dev.aperso.composite.skia.SkiaSurface
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.awaitCancellation
@@ -36,6 +38,7 @@ import net.minecraft.client.gui.GuiGraphics
 import org.jetbrains.skiko.currentNanoTime
 import org.lwjgl.glfw.GLFW
 import org.lwjgl.glfw.GLFWCharCallbackI
+import kotlin.math.abs
 import kotlin.math.pow
 
 @OptIn(InternalComposeUiApi::class, ExperimentalComposeUiApi::class)
@@ -71,9 +74,15 @@ open class ComposeGui(
 
     private var scale = Float.NaN
 
+    // Multiplicateur de distance par cran de molette. Monte-le pour defiler plus loin, baisse-le pour plus fin.
+    private val scrollSpeed = 1.0f
+
+    // Scroll a inertie douce : on accumule le delta puis on l'etale sur plusieurs frames (defilement
+    // fluide) -> on VOIT tout le contenu passer, rien n'est saute. Coupe pendant un appui (cf. pressed).
     private var lastScrollTime = currentNanoTime()
     private var scrollX = 0f
     private var scrollY = 0f
+    private var pressed = false
 
     init {
         scene.setContent {
@@ -128,8 +137,21 @@ open class ComposeGui(
         }
     }
 
+    private var closed = false
+
     open fun onClose() {
+        if (closed) return
+        closed = true
         scene.close()
+        SkiaContext.run {
+            SkiaContext.directContext.resetGLAll()
+            SkiaContext.directContext.flush()
+        }
+        GlStateGuard.restoreAfterSkia()
+        // La cible principale garde le filtre que Skia lui a laisse tant qu'on ne la force pas.
+        val main = minecraft.mainRenderTarget
+        main.filterMode = -1
+        main.setFilterMode(9728) // GL_NEAREST
         GLFW.glfwSetCharCallback(minecraft.window.window, charCallback)
     }
 
@@ -141,21 +163,31 @@ open class ComposeGui(
         val currentTime = currentNanoTime()
         val deltaT = (currentTime - lastScrollTime).shr(16) * 0.001f
         lastScrollTime = currentTime
-        val decayX = scrollX - scrollX * 0.3f.pow(deltaT)
-        val decayY = scrollY - scrollY * 0.3f.pow(deltaT)
-        scene.sendPointerEvent(
-            PointerEventType.Scroll,
-            Offset(mouseX * scale, mouseY * scale),
-            Offset(decayX * scale, decayY * scale)
-        )
-        scrollX -= decayX
-        scrollY -= decayY
+        // Inertie douce, mais JAMAIS pendant un appui : un event Scroll entre Press et Release
+        // serait interprete comme un scroll par le parent et annulerait le clic de l'enfant.
+        if (!pressed && (abs(scrollX) > 0.01f || abs(scrollY) > 0.01f)) {
+            val decayX = scrollX - scrollX * 0.3f.pow(deltaT)
+            val decayY = scrollY - scrollY * 0.3f.pow(deltaT)
+            scene.sendPointerEvent(
+                PointerEventType.Scroll,
+                Offset(mouseX * scale, mouseY * scale),
+                Offset(decayX * scale, decayY * scale)
+            )
+            scrollX -= decayX
+            scrollY -= decayY
+            if (abs(scrollX) < 0.01f) scrollX = 0f
+            if (abs(scrollY) < 0.01f) scrollY = 0f
+        }
         surface.render(guiGraphics) {
             scene.render(it, currentTime)
         }
     }
 
     open fun mouseClicked(mouseX: Double, mouseY: Double, button: Int): Boolean {
+        // Stoppe net l'inertie en cours pour qu'aucun event Scroll ne vienne annuler ce clic.
+        scrollX = 0f
+        scrollY = 0f
+        pressed = true
         scene.sendPointerEvent(
             PointerEventType.Press,
             Offset((mouseX * scale).toFloat(), (mouseY * scale).toFloat()),
@@ -165,6 +197,7 @@ open class ComposeGui(
     }
 
     open fun mouseReleased(mouseX: Double, mouseY: Double, button: Int): Boolean {
+        pressed = false
         scene.sendPointerEvent(
             PointerEventType.Release,
             Offset((mouseX * scale).toFloat(), (mouseY * scale).toFloat()),
@@ -174,9 +207,10 @@ open class ComposeGui(
     }
 
     open fun mouseScrolled(mouseX: Double, mouseY: Double, scrollX: Double, scrollY: Double): Boolean {
-        this.scrollX += scrollX.toFloat()
-        this.scrollY -= scrollY.toFloat()
-        return true // Returning true as gui handled it, though original called super.
+        // On accumule ; render() etale l'envoi sur plusieurs frames pour un defilement fluide.
+        this.scrollX += scrollX.toFloat() * scrollSpeed
+        this.scrollY -= scrollY.toFloat() * scrollSpeed
+        return true
     }
 
     private fun keyEvent(type: KeyEventType, keyCode: Int, modifiers: Int): KeyEvent {

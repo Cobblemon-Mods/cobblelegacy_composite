@@ -1,8 +1,8 @@
 {
 	"schemaVersion": 1,
-	"id": "composite",
+	"id": "cobblelegacy-libs",
 	"version": "${version}",
-	"name": "Composite",
+	"name": "CobbleLegacy Libs",
 	"description": "A library mod that lets you use Jetpack Compose and Material 3 in Minecraft.",
 	"authors": [
 		"apersomany"

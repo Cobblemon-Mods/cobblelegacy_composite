@@ -1,11 +1,13 @@
 package dev.aperso.composite
 
+import dev.aperso.composite.diag.RenderDiagnostics
 import dev.aperso.composite.skia.SkiaContext
 import dev.aperso.composite.test.AssetImageTest
 import dev.aperso.composite.test.ItemTest
 import dev.aperso.composite.test.TextureTest
 import dev.aperso.composite.test.TranslationTest
 import net.fabricmc.api.ClientModInitializer
+import net.minecraft.network.chat.Component
 import net.fabricmc.fabric.api.client.command.v2.ClientCommandManager
 import net.fabricmc.fabric.api.client.command.v2.ClientCommandRegistrationCallback
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientLifecycleEvents
@@ -23,9 +25,23 @@ object Composite : ClientModInitializer {
             SkiaContext.initialize()
         }
 
+        // Avant que Minecraft ne detruise sa fenetre : voir SkiaContext.shutdown.
+        ClientLifecycleEvents.CLIENT_STOPPING.register {
+            SkiaContext.shutdown()
+        }
+
         ClientCommandRegistrationCallback.EVENT.register { dispatcher, _ ->
             dispatcher.register(
                 ClientCommandManager.literal("composite")
+                    .then(
+                        ClientCommandManager.literal("diag").executes { context ->
+                            val on = RenderDiagnostics.toggle()
+                            context.source.sendFeedback(
+                                Component.literal("Composite diagnostics " + if (on) "ON" else "OFF")
+                            )
+                            1
+                        }
+                    )
                     .then(
                         ClientCommandManager.literal("test")
                             .then(TextureTest.register())

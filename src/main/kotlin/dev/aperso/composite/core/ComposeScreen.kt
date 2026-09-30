@@ -20,6 +20,11 @@ open class ComposeScreen(
         gui.onClose()
     }
 
+    override fun removed() {
+        super.removed()
+        gui.onClose()
+    }
+
     override fun render(graphics: GuiGraphics, mouseX: Int, mouseY: Int, partialTick: Float) {
         super.render(graphics, mouseX, mouseY, partialTick)
         gui.render(graphics, mouseX, mouseY, partialTick)
