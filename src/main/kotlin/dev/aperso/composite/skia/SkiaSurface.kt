@@ -18,9 +18,15 @@ import org.lwjgl.opengl.GL30
 import java.util.Deque
 
 class SkiaSurface {
-    private val texture: TextureTarget by lazy { TextureTarget(854, 480, false, false) }
-    private lateinit var target: BackendRenderTarget
-    private lateinit var surface: Surface
+    // Creee au premier resize, DANS SkiaContext.run : sous Windows son FBO appartient ainsi au
+    // contexte de Skia, celui qui y dessine. Un FBO ne se partage pas entre contextes, d'ou
+    // l'importance de ne jamais y toucher (creation comme destruction) ailleurs que dans run.
+    private val textureHolder = lazy { TextureTarget(854, 480, false, false) }
+    private val texture: TextureTarget get() = textureHolder.value
+    private var target: BackendRenderTarget? = null
+    private var surface: Surface? = null
+
+    /** FBO cote Minecraft qui ecrit dans la meme texture ; cree dans le contexte de Minecraft. */
     private var buffer: Int = 0
 
     private fun ensureBuffer() {
@@ -30,16 +36,19 @@ class SkiaSurface {
     }
 
     fun resize(width: Int, height: Int) {
-        if (this::surface.isInitialized && texture.width == width && texture.height == height) return
+        // surface != null court-circuite : tant qu'elle n'existe pas, texture n'est pas touchee
+        // ici, et sa creation a lieu dans run ci-dessous (cf. textureHolder).
+        if (surface != null && texture.width == width && texture.height == height) return
         ensureBuffer()
         SkiaContext.run {
-            if (this::surface.isInitialized) surface.close()
-            if (this::target.isInitialized) target.close()
+            surface?.close()
+            target?.close()
+            surface = null
+            target = null
 
             texture.resize(width, height, false)
 
-            val context = SkiaContext.directContext
-            target = BackendRenderTarget.makeGL(
+            val newTarget = BackendRenderTarget.makeGL(
                 width,
                 height,
                 0,
@@ -47,9 +56,10 @@ class SkiaSurface {
                 texture.frameBufferId,
                 GL30.GL_RGBA8
             )
+            target = newTarget
             surface = Surface.makeFromBackendRenderTarget(
-                context,
-                target,
+                SkiaContext.directContext,
+                newTarget,
                 SurfaceOrigin.BOTTOM_LEFT,
                 SurfaceColorFormat.RGBA_8888,
                 ColorSpace.sRGB
@@ -81,6 +91,12 @@ class SkiaSurface {
     }
 
     fun render(guiGraphics: GuiGraphics, render: (Canvas) -> Unit) {
+        val surface = surface
+        if (surface == null) {
+            // Surface liberee (ecran ferme) ou pas encore dimensionnee : rien a composer.
+            recordedCalls.clear()
+            return
+        }
         ensureBuffer()
         val main = Minecraft.getInstance().mainRenderTarget
         GL30.glBindFramebuffer(GL30.GL_FRAMEBUFFER, buffer)
@@ -114,6 +130,41 @@ class SkiaSurface {
             replayed++
         }
         RenderDiagnostics.afterReplay(guiGraphics, replayed)
+    }
+
+    /**
+     * Libere tout ce que la surface possede cote GPU.
+     *
+     * Rien ne le faisait : chaque ecran Compose ouvert laissait derriere lui une texture de la
+     * taille de la fenetre (~15 Mo en 2560x1440, ~33 Mo en 4K), deux FBO et une surface Skia,
+     * jamais recuperes -- les objets OpenGL ne sont pas ramasses par le GC.
+     *
+     * Idempotent. Un resize ulterieur recree tout.
+     */
+    fun close() {
+        recordedCalls.clear()
+        if (buffer != 0) {
+            // Cree par ensureBuffer(), hors run : il appartient au contexte de Minecraft.
+            GL30.glDeleteFramebuffers(buffer)
+            buffer = 0
+        }
+
+        val oldSurface = surface
+        val oldTarget = target
+        surface = null
+        target = null
+        if (oldSurface == null && oldTarget == null && !textureHolder.isInitialized()) return
+
+        SkiaContext.run {
+            oldSurface?.close()
+            oldTarget?.close()
+            // Detruit la texture et SON FBO, ne dans ce contexte : le supprimer depuis celui de
+            // Minecraft effacerait sous Windows un autre FBO portant le meme numero.
+            if (textureHolder.isInitialized()) texture.destroyBuffers()
+        }
+        // destroyBuffers() passe par GlStateManager depuis le contexte de Skia : meme
+        // resynchronisation que dans resize().
+        GlStateGuard.restore()
     }
 }
 

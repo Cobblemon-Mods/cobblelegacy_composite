@@ -37,7 +37,6 @@ import net.minecraft.client.Minecraft
 import net.minecraft.client.gui.GuiGraphics
 import org.jetbrains.skiko.currentNanoTime
 import org.lwjgl.glfw.GLFW
-import org.lwjgl.glfw.GLFWCharCallbackI
 import kotlin.math.abs
 import kotlin.math.pow
 
@@ -84,6 +83,9 @@ open class ComposeGui(
     private var scrollY = 0f
     private var pressed = false
 
+    /** Derniere position envoyee a Compose. */
+    private var lastPointer: Offset? = null
+
     init {
         scene.setContent {
             CompositionLocalProvider(
@@ -108,21 +110,21 @@ open class ComposeGui(
     }
 
     override fun setPointerIcon(pointerIcon: PointerIcon) {
-        val cursor = when (pointerIcon) {
+        val shape = when (pointerIcon) {
             PointerIcon.Hand -> GLFW.GLFW_HAND_CURSOR
             PointerIcon.Text -> GLFW.GLFW_IBEAM_CURSOR
             PointerIcon.Crosshair -> GLFW.GLFW_CROSSHAIR_CURSOR
             else -> GLFW.GLFW_ARROW_CURSOR
         }
         minecraft?.window?.let {
-            GLFW.glfwSetCursor(
-                it.window,
-                GLFW.glfwCreateStandardCursor(cursor)
-            )
+            GLFW.glfwSetCursor(it.window, StandardCursors.get(shape))
         }
     }
 
-    private var charCallback: GLFWCharCallbackI? = null
+    /** Appele par [CharInput] quand cette scene est celle qui recoit la saisie. */
+    internal fun onChar(codepoint: Int) {
+        onEditCommand?.invoke(listOf(CommitTextCommand(Char(codepoint).toString(), 1)))
+    }
 
     open fun init() {
         val window = minecraft.window
@@ -130,11 +132,7 @@ open class ComposeGui(
         scale = window.guiScale.toFloat()
         scene.size = IntSize(window.width, window.height)
         scene.density = Density(scale * 0.5f, 1.0f)
-        if (charCallback == null) {
-            charCallback = GLFW.glfwSetCharCallback(minecraft.window.window) {
-                _, codepoint -> onEditCommand?.invoke(listOf(CommitTextCommand(Char(codepoint).toString(), 1)))
-            }
-        }
+        CharInput.register(this)
     }
 
     private var closed = false
@@ -143,6 +141,11 @@ open class ComposeGui(
         if (closed) return
         closed = true
         scene.close()
+        // Liberation GPU differee au prochain tick : onClose peut etre declenche depuis le rendu
+        // de la scene (un effet qui ferme l'ecran), donc a l'interieur de SkiaContext.run, ou
+        // sous Windows les FBO de Minecraft et de Skia ne sont pas dans le meme contexte. Au
+        // prochain tick on est toujours hors rendu, dans le contexte de Minecraft.
+        minecraft.tell { surface.close() }
         SkiaContext.run {
             SkiaContext.directContext.resetGLAll()
             SkiaContext.directContext.flush()
@@ -152,14 +155,21 @@ open class ComposeGui(
         val main = minecraft.mainRenderTarget
         main.filterMode = -1
         main.setFilterMode(9728) // GL_NEAREST
-        GLFW.glfwSetCharCallback(minecraft.window.window, charCallback)
+        CharInput.unregister(this)
+        // Sans ca, une main de survol restait affichee sur l'ecran suivant, vanilla compris.
+        GLFW.glfwSetCursor(minecraft.window.window, 0L)
     }
 
     open fun render(guiGraphics: GuiGraphics, mouseX: Int, mouseY: Int, partialTick: Float) {
-        scene.sendPointerEvent(
-            PointerEventType.Move,
-            Offset(mouseX * scale, mouseY * scale)
-        )
+        if (closed) return
+        val pointer = Offset(mouseX * scale, mouseY * scale)
+        // Un Move a position inchangee ne coute qu'un hit-test pour rien. Si la mise en page
+        // bouge sous un pointeur immobile, Compose renvoie de lui-meme la position apres le
+        // layout (SyntheticEventSender) : le survol reste juste.
+        if (pointer != lastPointer) {
+            lastPointer = pointer
+            scene.sendPointerEvent(PointerEventType.Move, pointer)
+        }
         val currentTime = currentNanoTime()
         val deltaT = (currentTime - lastScrollTime).shr(16) * 0.001f
         lastScrollTime = currentTime
@@ -247,4 +257,15 @@ open class ComposeGui(
     open fun keyReleased(keyCode: Int, scanCode: Int, modifiers: Int): Boolean {
         return scene.sendKeyEvent(keyEvent(KeyEventType.KeyUp, keyCode, modifiers))
     }
+}
+
+/**
+ * Un curseur GLFW standard se cree une fois. glfwCreateStandardCursor a chaque changement de
+ * survol en allouait un nouveau, jamais detruit. Ils restent valables pour toute fenetre et
+ * vivent autant que le jeu.
+ */
+private object StandardCursors {
+    private val cache = HashMap<Int, Long>()
+
+    fun get(shape: Int): Long = cache.getOrPut(shape) { GLFW.glfwCreateStandardCursor(shape) }
 }
